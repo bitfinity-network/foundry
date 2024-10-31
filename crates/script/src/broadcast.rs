@@ -42,9 +42,9 @@ where
     tx.gas = None;
 
     tx.set_gas_limit(
-        provider.estimate_gas(tx).await.wrap_err("Failed to estimate gas for tx")? *
-            estimate_multiplier /
-            100,
+        provider.estimate_gas(tx).await.wrap_err("Failed to estimate gas for tx")?
+            * estimate_multiplier
+            / 100,
     );
     Ok(())
 }
@@ -55,7 +55,83 @@ pub async fn next_nonce(caller: Address, provider_url: &str) -> eyre::Result<u64
     Ok(provider.get_transaction_count(caller).await?)
 }
 
-pub async fn send_transaction(
+pub async fn bitfinity_send_transaction(
+    provider: Arc<RetryProvider>,
+    mut kind: SendTransactionKind<'_>,
+    sequential_broadcast: bool,
+    is_fixed_gas_limit: bool,
+    estimate_via_rpc: bool,
+    estimate_multiplier: u64,
+) -> Result<TxHash> {
+    if let SendTransactionKind::Raw(tx, _) | SendTransactionKind::Unlocked(tx) = &mut kind {
+        if sequential_broadcast {
+            let from = tx.from.expect("no sender");
+
+            let tx_nonce = tx.nonce.expect("no nonce");
+            for attempt in 0..5 {
+                let nonce = provider.get_transaction_count(from).await?;
+                match nonce.cmp(&tx_nonce) {
+                    Ordering::Greater => {
+                        bail!("EOA nonce changed unexpectedly while sending transactions. Expected {tx_nonce} got {nonce} from provider.")
+                    }
+                    Ordering::Less => {
+                        if attempt == 4 {
+                            bail!("After 5 attempts, provider nonce ({nonce}) is still behind expected nonce ({tx_nonce}).")
+                        }
+                        warn!("Expected nonce ({tx_nonce}) is ahead of provider nonce ({nonce}). Retrying in 1 second...");
+                        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+                    }
+                    Ordering::Equal => {
+                        // Nonces are equal, we can proceed
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Chains which use `eth_estimateGas` are being sent sequentially and require their
+        // gas to be re-estimated right before broadcasting.
+        if !is_fixed_gas_limit && estimate_via_rpc {
+            estimate_gas(tx, &provider, estimate_multiplier).await?;
+        }
+    }
+
+    let tx_hash = match kind {
+        SendTransactionKind::Unlocked(tx) => {
+            debug!("sending transaction from unlocked account {:?}", tx);
+
+            // Submit the transaction
+            let _ = provider.send_transaction(tx).await;
+
+            TxHash::default()
+        }
+        SendTransactionKind::Raw(tx, signer) => {
+            debug!("sending transaction: {:?}", tx);
+
+            let signed = tx.build(signer).await?;
+            let hash = *signed.tx_hash();
+
+            // Submit the raw transaction
+            let _ = provider.send_raw_transaction(signed.encoded_2718().as_ref()).await;
+
+            trace!("Sent transaction: {:?}", hash);
+            // Return the hash
+            hash
+        }
+        SendTransactionKind::Signed(ref tx) => {
+            debug!("sending transaction: {:?}", tx);
+            let _ = provider.send_raw_transaction(tx.encoded_2718().as_ref()).await;
+            let hash = *tx.tx_hash();
+
+            trace!("Sent transaction: {:?}", hash);
+            hash
+        }
+    };
+
+    Ok(tx_hash)
+}
+
+pub async fn _send_transaction(
     provider: Arc<RetryProvider>,
     mut kind: SendTransactionKind<'_>,
     sequential_broadcast: bool,
@@ -342,10 +418,10 @@ impl BundledState {
                 // their order otherwise.
                 // Or if the chain does not support batched transactions (eg. Arbitrum).
                 // Or if we need to invoke eth_estimateGas before sending transactions.
-                let sequential_broadcast = estimate_via_rpc ||
-                    self.args.slow ||
-                    required_addresses.len() != 1 ||
-                    !has_batch_support(sequence.chain);
+                let sequential_broadcast = estimate_via_rpc
+                    || self.args.slow
+                    || required_addresses.len() != 1
+                    || !has_batch_support(sequence.chain);
 
                 // We send transactions and wait for receipts in batches.
                 let batch_size = if sequential_broadcast { 1 } else { self.args.batch_size };
@@ -360,7 +436,7 @@ impl BundledState {
                         batch_number * batch_size + std::cmp::min(batch_size, batch.len()) - 1
                     ));
                     for (kind, is_fixed_gas_limit) in batch {
-                        let fut = send_transaction(
+                        let fut = bitfinity_send_transaction(
                             provider.clone(),
                             kind.clone(),
                             sequential_broadcast,
@@ -437,8 +513,9 @@ impl BundledState {
 
     pub fn verify_preflight_check(&self) -> Result<()> {
         for sequence in self.sequence.sequences() {
-            if self.args.verifier.verifier == VerificationProviderType::Etherscan &&
-                self.script_config
+            if self.args.verifier.verifier == VerificationProviderType::Etherscan
+                && self
+                    .script_config
                     .config
                     .get_etherscan_api_key(Some(sequence.chain.into()))
                     .is_none()

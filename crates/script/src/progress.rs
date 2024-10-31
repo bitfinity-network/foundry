@@ -203,6 +203,8 @@ impl ScriptProgress {
                     deployment_sequence.remove_pending(tx_hash);
                     errors.push(format!("Transaction dropped from the mempool: {tx_hash:?}"));
 
+                    error!(tx_hash=?tx_hash, "Confirm the transaction manually");
+
                     seq_progress.inner.write().finish_tx_spinner(tx_hash);
                 }
                 Ok(TxStatus::Success(receipt)) => {
