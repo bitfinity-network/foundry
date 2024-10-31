@@ -40,3 +40,5 @@ pub use io::{shell, stdin, Shell};
 pub use traits::*;
 pub use transactions::*;
 pub use utils::*;
+
+pub mod bitfinity;

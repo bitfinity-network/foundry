@@ -1,10 +1,11 @@
-use super::fork::environment;
 use crate::fork::CreateFork;
 use alloy_primitives::{Address, B256, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::AnyNetworkBlock;
 use eyre::WrapErr;
-use foundry_common::{provider::ProviderBuilder, ALCHEMY_FREE_TIER_CUPS};
+use foundry_common::{
+    bitfinity::init::bitfinity_environment, provider::ProviderBuilder, ALCHEMY_FREE_TIER_CUPS,
+};
 use foundry_config::{Chain, Config};
 use revm::primitives::{BlockEnv, CfgEnv, TxEnv};
 use serde::{Deserialize, Deserializer, Serialize};
@@ -91,7 +92,7 @@ impl EvmOpts {
         let provider = ProviderBuilder::new(fork_url)
             .compute_units_per_second(self.get_compute_units_per_second())
             .build()?;
-        environment(
+        bitfinity_environment(
             &provider,
             self.memory_limit,
             self.env.gas_price.map(|v| v as u128),

@@ -3,7 +3,9 @@
 pub mod runtime_transport;
 
 use crate::{
-    provider::runtime_transport::RuntimeTransportBuilder, ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT,
+    bitfinity::retry::{BitfinityRetryBackoffLayer, BitfinityRetryBackoffService},
+    provider::runtime_transport::RuntimeTransportBuilder,
+    ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT,
 };
 use alloy_provider::{
     fillers::{ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller, WalletFiller},
@@ -11,10 +13,7 @@ use alloy_provider::{
     Identity, ProviderBuilder as AlloyProviderBuilder, RootProvider,
 };
 use alloy_rpc_client::ClientBuilder;
-use alloy_transport::{
-    layers::{RetryBackoffLayer, RetryBackoffService},
-    utils::guess_local_url,
-};
+use alloy_transport::utils::guess_local_url;
 use eyre::{Result, WrapErr};
 use foundry_config::NamedChain;
 use reqwest::Url;
@@ -35,7 +34,8 @@ const DEFAULT_UNKNOWN_CHAIN_BLOCK_TIME: Duration = Duration::from_secs(3);
 const POLL_INTERVAL_BLOCK_TIME_SCALE_FACTOR: f32 = 0.6;
 
 /// Helper type alias for a retry provider
-pub type RetryProvider<N = AnyNetwork> = RootProvider<RetryBackoffService<RuntimeTransport>, N>;
+pub type RetryProvider<N = AnyNetwork> =
+    RootProvider<BitfinityRetryBackoffService<RuntimeTransport>, N>;
 
 /// Helper type alias for a retry provider with a signer
 pub type RetryProviderWithSigner<N = AnyNetwork> = FillProvider<
@@ -52,8 +52,8 @@ pub type RetryProviderWithSigner<N = AnyNetwork> = FillProvider<
         >,
         WalletFiller<EthereumWallet>,
     >,
-    RootProvider<RetryBackoffService<RuntimeTransport>, N>,
-    RetryBackoffService<RuntimeTransport>,
+    RootProvider<BitfinityRetryBackoffService<RuntimeTransport>, N>,
+    BitfinityRetryBackoffService<RuntimeTransport>,
     N,
 >;
 
@@ -257,7 +257,7 @@ impl ProviderBuilder {
         let url = url?;
 
         let retry_layer =
-            RetryBackoffLayer::new(max_retry, initial_backoff, compute_units_per_second);
+            BitfinityRetryBackoffLayer::new(max_retry, initial_backoff, compute_units_per_second);
 
         let transport = RuntimeTransportBuilder::new(url)
             .with_timeout(timeout)
@@ -297,7 +297,7 @@ impl ProviderBuilder {
         let url = url?;
 
         let retry_layer =
-            RetryBackoffLayer::new(max_retry, initial_backoff, compute_units_per_second);
+            BitfinityRetryBackoffLayer::new(max_retry, initial_backoff, compute_units_per_second);
 
         let transport = RuntimeTransportBuilder::new(url)
             .with_timeout(timeout)
